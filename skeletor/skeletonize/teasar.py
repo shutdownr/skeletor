@@ -55,9 +55,14 @@ def by_teasar(mesh, inv_dist, min_length=None, root=None, progress=True):
                     ``.vertices`` and ``.faces`` properties  (e.g. a
                     trimesh.Trimesh) or a tuple ``(vertices, faces)`` or a
                     dictionary ``{'vertices': vertices, 'faces': faces}``.
-    inv_dist :      int | float
+    inv_dist :      int | float | list
                     Distance along the mesh used for invalidation of vertices.
                     This controls how detailed (or noisy) the skeleton will be.
+                    If a list is given, different invalidation distances will be 
+                    used for vertices with different distances from the root
+                    e.g. ``[4000,3000,2000,1000]`` would assign ``4000`` to the
+                    first quartile of vertices along each path and ``1000`` to
+                    the fourth quartile of vertices.
     min_length :    float, optional
                     If provided, will skip any branch that is shorter than
                     `min_length`. Use this to get rid of noise but note that
@@ -158,21 +163,28 @@ def by_teasar(mesh, inv_dist, min_length=None, root=None, progress=True):
                 # taken again in future iterations
                 SG.es[eids]['weight'] = 0
 
+                # Create a list with one element if distances are provided as
+                # a single value and apply the same logic
+                if type(inv_dist) != list:
+                    inv_dist = [inv_dist]
                 # Get all nodes within `inv_dist` to this path
                 # Note: can we somehow only include still valid nodes to speed
                 # things up?
-                dist, _, sources = dijkstra(sp, directed=False, indices=path,
-                                            limit=inv_dist, min_only=True,
-                                            return_predecessors=True)
+                for i, i_dist in enumerate(inv_dist):
+                    segment_length = int(len(path) / len(inv_dist))
+                    indices = path[i*segment_length:(i+1)*segment_length]
+                    dist, _, sources = dijkstra(sp, directed=False, 
+                                                indices=indices,
+                                                limit=i_dist, min_only=True,
+                                                return_predecessors=True)
+                    # Invalidate
+                    in_dist = dist <= i_dist
+                    to_invalidate = np.where(in_dist)[0]
+                    valid[to_invalidate] = False
+                    paths[to_invalidate] = 0
 
-                # Invalidate
-                in_dist = dist <= inv_dist
-                to_invalidate = np.where(in_dist)[0]
-                valid[to_invalidate] = False
-                paths[to_invalidate] = 0
-
-                # Update mesh vertex to skeleton node map
-                mesh_map[cc[in_dist]] = cc[sources[in_dist]]
+                    # Update mesh vertex to skeleton node map
+                    mesh_map[cc[in_dist]] = cc[sources[in_dist]]
 
                 pbar.update((~valid).sum() - invalidated)
                 invalidated = (~valid).sum()
